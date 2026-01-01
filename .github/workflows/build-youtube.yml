@@ -93,13 +93,17 @@ jobs:
         run: |
           # Install required tools
           sudo apt-get update
-          sudo apt-get install -y wget curl jq unzip aapt
+          sudo apt-get install -y wget curl jq unzip
           
           # Install pup for HTML parsing (used for APK downloads)
           wget -q https://github.com/ericchiang/pup/releases/download/v0.4.0/pup_v0.4.0_linux_amd64.zip
-          unzip pup_v0.4.0_linux_amd64.zip
+          unzip -q pup_v0.4.0_linux_amd64.zip
           sudo mv pup /usr/local/bin/
-          chmod +x /usr/local/bin/pup
+          sudo chmod +x /usr/local/bin/pup
+          
+          # Verify installations
+          echo "✓ jq version: $(jq --version)"
+          echo "✓ pup installed: $(which pup)"
 
       - name: Determine Patch Variant
         id: variant
@@ -143,38 +147,88 @@ jobs:
         run: |
           echo "Downloading ReVanced tools for variant: ${{ steps.variant.outputs.variant }}"
           
+          # Function to get latest release tag without jq
+          get_latest_release() {
+            curl -s "https://api.github.com/repos/$1/releases/latest" | \
+              grep '"tag_name":' | \
+              sed -E 's/.*"tag_name": "([^"]+)".*/\1/'
+          }
+          
+          get_prerelease() {
+            curl -s "https://api.github.com/repos/$1/releases" | \
+              grep '"tag_name":' | \
+              head -1 | \
+              sed -E 's/.*"tag_name": "([^"]+)".*/\1/'
+          }
+          
           # Download CLI
           if [ "${{ steps.variant.outputs.release_type }}" == "latest" ]; then
-            CLI_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.cli_repo }}/releases/latest | jq -r .tag_name)
+            CLI_VERSION=$(get_latest_release "${{ steps.variant.outputs.cli_repo }}")
           else
-            CLI_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.cli_repo }}/releases | jq -r '.[0].tag_name')
+            CLI_VERSION=$(get_prerelease "${{ steps.variant.outputs.cli_repo }}")
           fi
           
-          wget -q "https://github.com/${{ steps.variant.outputs.cli_repo }}/releases/download/${CLI_VERSION}/revanced-cli-${CLI_VERSION}-all.jar" -O revanced-cli.jar
-          echo "✓ CLI Version: ${CLI_VERSION}"
+          echo "Downloading CLI version: ${CLI_VERSION}"
+          wget -q "https://github.com/${{ steps.variant.outputs.cli_repo }}/releases/download/${CLI_VERSION}/revanced-cli-${CLI_VERSION}-all.jar" -O revanced-cli.jar || {
+            echo "Error: Failed to download CLI"
+            exit 1
+          }
+          
+          if [ -f revanced-cli.jar ] && [ -s revanced-cli.jar ]; then
+            echo "✓ CLI Version: ${CLI_VERSION} ($(du -h revanced-cli.jar | cut -f1))"
+          else
+            echo "Error: CLI download verification failed"
+            exit 1
+          fi
           
           # Download Patches
           if [ "${{ steps.variant.outputs.release_type }}" == "latest" ]; then
-            PATCHES_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.patch_repo }}/releases/latest | jq -r .tag_name)
+            PATCHES_VERSION=$(get_latest_release "${{ steps.variant.outputs.patch_repo }}")
           else
-            PATCHES_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.patch_repo }}/releases | jq -r '.[0].tag_name')
+            PATCHES_VERSION=$(get_prerelease "${{ steps.variant.outputs.patch_repo }}")
           fi
           
-          wget -q "https://github.com/${{ steps.variant.outputs.patch_repo }}/releases/download/${PATCHES_VERSION}/revanced-patches-${PATCHES_VERSION}.jar" -O revanced-patches.jar
-          echo "✓ Patches Version: ${PATCHES_VERSION}"
+          echo "Downloading Patches version: ${PATCHES_VERSION}"
+          wget -q "https://github.com/${{ steps.variant.outputs.patch_repo }}/releases/download/${PATCHES_VERSION}/revanced-patches-${PATCHES_VERSION}.jar" -O revanced-patches.jar || {
+            echo "Error: Failed to download Patches"
+            exit 1
+          }
+          
+          if [ -f revanced-patches.jar ] && [ -s revanced-patches.jar ]; then
+            echo "✓ Patches Version: ${PATCHES_VERSION} ($(du -h revanced-patches.jar | cut -f1))"
+          else
+            echo "Error: Patches download verification failed"
+            exit 1
+          fi
           
           # Download Integrations
           if [ "${{ steps.variant.outputs.release_type }}" == "latest" ]; then
-            INT_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.int_repo }}/releases/latest | jq -r .tag_name)
+            INT_VERSION=$(get_latest_release "${{ steps.variant.outputs.int_repo }}")
           else
-            INT_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.int_repo }}/releases | jq -r '.[0].tag_name')
+            INT_VERSION=$(get_prerelease "${{ steps.variant.outputs.int_repo }}")
           fi
           
-          wget -q "https://github.com/${{ steps.variant.outputs.int_repo }}/releases/download/${INT_VERSION}/revanced-integrations-${INT_VERSION}.apk" -O revanced-integrations.apk
-          echo "✓ Integrations Version: ${INT_VERSION}"
+          echo "Downloading Integrations version: ${INT_VERSION}"
+          wget -q "https://github.com/${{ steps.variant.outputs.int_repo }}/releases/download/${INT_VERSION}/revanced-integrations-${INT_VERSION}.apk" -O revanced-integrations.apk || {
+            echo "Error: Failed to download Integrations"
+            exit 1
+          }
+          
+          if [ -f revanced-integrations.apk ] && [ -s revanced-integrations.apk ]; then
+            echo "✓ Integrations Version: ${INT_VERSION} ($(du -h revanced-integrations.apk | cut -f1))"
+          else
+            echo "Error: Integrations download verification failed"
+            exit 1
+          fi
           
           # Save versions for later
           echo "${PATCHES_VERSION}" > patch_version.txt
+          echo "${CLI_VERSION}" > cli_version.txt
+          echo "${INT_VERSION}" > int_version.txt
+          
+          echo ""
+          echo "✅ All ReVanced tools downloaded successfully!"
+          ls -lh *.jar *.apk *.txt
 
       - name: Get Compatible YouTube Version
         id: yt_version
