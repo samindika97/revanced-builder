@@ -37,37 +37,123 @@ jobs:
           wget -q $(curl -s https://api.github.com/repos/revanced/revanced-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
           wget -q $(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".rvp")) | .browser_download_url')
 
-      - name: Get YouTube APK
+      - name: Get compatible YouTube version
+        id: get_version
         run: |
           # Get compatible version from patches
           VERSION=$(java -jar revanced-cli-*.jar list-patches --with-packages --with-versions *.rvp | \
             awk '/Package name: com.google.android.youtube/{found=1} found && /Compatible versions:/{getline; print $1; exit}')
           
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected compatible YouTube version: $VERSION"
+
+      - name: Download YouTube APK from APKMirror
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+        run: |
+          VERSION_DASH=$(echo $VERSION | sed 's/\./-/g')
           echo "Downloading YouTube version: $VERSION"
           
-          # Convert version format for APKMirror
-          VERSION_DASH=$(echo $VERSION | sed 's/\./-/g')
+          # Function to download with proper headers
+          download_with_headers() {
+            wget -nv --user-agent="Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0" \
+                 --header="Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8" \
+                 --header="Accept-Language: en-US,en;q=0.5" \
+                 --header="Connection: keep-alive" \
+                 --header="Upgrade-Insecure-Requests: 1" \
+                 --keep-session-cookies \
+                 --timeout=30 \
+                 "$@"
+          }
           
-          # Download base APK bundle from APKMirror
-          URL="https://www.apkmirror.com/apk/google-inc/youtube/youtube-${VERSION_DASH}-release/"
-          DOWNLOAD_URL=$(wget -qO- "$URL" | grep -oP 'BUNDLE</span>.*?href="\K[^"]+' | head -1)
-          DOWNLOAD_URL="https://www.apkmirror.com${DOWNLOAD_URL}"
+          # Get the APK page
+          BASE_URL="https://www.apkmirror.com/apk/google-inc/youtube/youtube-${VERSION_DASH}-release/"
+          echo "Fetching from: $BASE_URL"
           
-          DOWNLOAD_URL=$(wget -qO- "$DOWNLOAD_URL" | grep -oP 'class="downloadButton.*?href="\K[^"]+')
-          DOWNLOAD_URL="https://www.apkmirror.com${DOWNLOAD_URL}"
+          download_with_headers -O page1.html "$BASE_URL"
           
-          FINAL_URL=$(wget -qO- "$DOWNLOAD_URL" | grep -oP 'id="download-link".*?href="\K[^"]+')
-          FINAL_URL="https://www.apkmirror.com${FINAL_URL}"
+          # Find the BUNDLE download link
+          BUNDLE_LINK=$(cat page1.html | grep -oP 'href="(/apk/google-inc/youtube/youtube-[^"]+/download/)"' | head -1 | cut -d'"' -f2)
           
-          wget -O ./download/youtube.apkm "$FINAL_URL"
+          if [ -z "$BUNDLE_LINK" ]; then
+            echo "Error: Could not find bundle link. Trying alternative method..."
+            BUNDLE_LINK=$(cat page1.html | grep 'BUNDLE' | grep -oP 'href="\K/apk/[^"]+/download/' | head -1)
+          fi
+          
+          if [ -z "$BUNDLE_LINK" ]; then
+            echo "Error: Still could not find bundle link"
+            echo "Available links:"
+            grep -oP 'href="(/apk/google-inc/youtube/[^"]+)"' page1.html | head -10
+            exit 1
+          fi
+          
+          DOWNLOAD_URL="https://www.apkmirror.com${BUNDLE_LINK}"
+          echo "Download page: $DOWNLOAD_URL"
+          
+          download_with_headers -O page2.html "$DOWNLOAD_URL"
+          
+          # Get the actual download button link
+          BUTTON_LINK=$(cat page2.html | grep -oP 'downloadButton[^>]+href="\K[^"]+' | head -1)
+          
+          if [ -z "$BUTTON_LINK" ]; then
+            echo "Error: Could not find download button"
+            exit 1
+          fi
+          
+          BUTTON_URL="https://www.apkmirror.com${BUTTON_LINK}"
+          echo "Button URL: $BUTTON_URL"
+          
+          download_with_headers -O page3.html "$BUTTON_URL"
+          
+          # Get final download link
+          FINAL_LINK=$(cat page3.html | grep -oP 'id="download-link"[^>]+href="\K[^"]+' | head -1)
+          
+          if [ -z "$FINAL_LINK" ]; then
+            echo "Error: Could not find final download link"
+            exit 1
+          fi
+          
+          FINAL_URL="https://www.apkmirror.com${FINAL_LINK}"
+          echo "Final download URL: $FINAL_URL"
+          
+          # Download the APK bundle
+          download_with_headers -O ./download/youtube.apkm "$FINAL_URL"
+          
+          # Verify download
+          if [ ! -f ./download/youtube.apkm ] || [ ! -s ./download/youtube.apkm ]; then
+            echo "Error: Download failed or file is empty"
+            exit 1
+          fi
+          
+          echo "Successfully downloaded YouTube APK bundle"
+          ls -lh ./download/youtube.apkm
           
           # Extract bundle
           unzip -q ./download/youtube.apkm -d ./download/youtube
+          
+          # Verify extraction
+          if [ ! -f ./download/youtube/base.apk ]; then
+            echo "Error: base.apk not found after extraction"
+            ls -la ./download/youtube/
+            exit 1
+          fi
+          
+          echo "Successfully extracted APK bundle"
+          ls -la ./download/youtube/
 
       - name: Patch YouTube (Universal)
         run: |
+          echo "Creating universal APK..."
+          
           # Merge all splits into universal APK
           java -jar ./APKEditor.jar m -i ./download/youtube -o ./download/youtube.apk
+          
+          if [ ! -f ./download/youtube.apk ]; then
+            echo "Error: Failed to create universal APK"
+            exit 1
+          fi
+          
+          echo "Patching universal APK..."
           
           # Patch
           java -jar revanced-cli-*.jar patch \
@@ -75,40 +161,112 @@ jobs:
             --out=./release/youtube-revanced-universal.apk \
             --keystore=./src/ks.keystore \
             --purge=true \
+            --force \
             ./download/youtube.apk
+          
+          if [ -f ./release/youtube-revanced-universal.apk ]; then
+            echo "Successfully created universal APK"
+            ls -lh ./release/youtube-revanced-universal.apk
+          else
+            echo "Warning: Universal APK creation failed"
+          fi
 
       - name: Patch YouTube (arm64-v8a)
         run: |
+          echo "Creating arm64-v8a APK..."
+          
           # Create architecture-specific build
           mkdir -p ./download/youtube-arm64
           cp ./download/youtube/base.apk ./download/youtube-arm64/
-          cp ./download/youtube/split_config.arm64_v8a.apk ./download/youtube-arm64/ 2>/dev/null || true
-          cp ./download/youtube/split_config.en.apk ./download/youtube-arm64/ 2>/dev/null || true
+          
+          # Copy architecture-specific splits
+          for split in ./download/youtube/split_config.arm64_v8a*.apk; do
+            [ -f "$split" ] && cp "$split" ./download/youtube-arm64/
+          done
+          
+          # Copy language splits (English)
+          for split in ./download/youtube/split_config.en*.apk; do
+            [ -f "$split" ] && cp "$split" ./download/youtube-arm64/
+          done
+          
+          # Copy DPI splits
+          for split in ./download/youtube/split_config.*dpi*.apk; do
+            [ -f "$split" ] && cp "$split" ./download/youtube-arm64/
+          done
+          
+          ls -la ./download/youtube-arm64/
           
           java -jar ./APKEditor.jar m -i ./download/youtube-arm64 -o ./download/youtube-arm64.apk
+          
+          if [ ! -f ./download/youtube-arm64.apk ]; then
+            echo "Error: Failed to create arm64-v8a APK"
+            exit 1
+          fi
+          
+          echo "Patching arm64-v8a APK..."
           
           java -jar revanced-cli-*.jar patch \
             -p *.rvp \
             --out=./release/youtube-revanced-arm64-v8a.apk \
             --keystore=./src/ks.keystore \
             --purge=true \
+            --force \
             ./download/youtube-arm64.apk
+          
+          if [ -f ./release/youtube-revanced-arm64-v8a.apk ]; then
+            echo "Successfully created arm64-v8a APK"
+            ls -lh ./release/youtube-revanced-arm64-v8a.apk
+          else
+            echo "Warning: arm64-v8a APK creation failed"
+          fi
 
       - name: Patch YouTube (armeabi-v7a)
         run: |
+          echo "Creating armeabi-v7a APK..."
+          
           mkdir -p ./download/youtube-arm32
           cp ./download/youtube/base.apk ./download/youtube-arm32/
-          cp ./download/youtube/split_config.armeabi_v7a.apk ./download/youtube-arm32/ 2>/dev/null || true
-          cp ./download/youtube/split_config.en.apk ./download/youtube-arm32/ 2>/dev/null || true
+          
+          # Copy architecture-specific splits
+          for split in ./download/youtube/split_config.armeabi_v7a*.apk; do
+            [ -f "$split" ] && cp "$split" ./download/youtube-arm32/
+          done
+          
+          # Copy language splits (English)
+          for split in ./download/youtube/split_config.en*.apk; do
+            [ -f "$split" ] && cp "$split" ./download/youtube-arm32/
+          done
+          
+          # Copy DPI splits
+          for split in ./download/youtube/split_config.*dpi*.apk; do
+            [ -f "$split" ] && cp "$split" ./download/youtube-arm32/
+          done
+          
+          ls -la ./download/youtube-arm32/
           
           java -jar ./APKEditor.jar m -i ./download/youtube-arm32 -o ./download/youtube-arm32.apk
+          
+          if [ ! -f ./download/youtube-arm32.apk ]; then
+            echo "Error: Failed to create armeabi-v7a APK"
+            exit 1
+          fi
+          
+          echo "Patching armeabi-v7a APK..."
           
           java -jar revanced-cli-*.jar patch \
             -p *.rvp \
             --out=./release/youtube-revanced-armeabi-v7a.apk \
             --keystore=./src/ks.keystore \
             --purge=true \
+            --force \
             ./download/youtube-arm32.apk
+          
+          if [ -f ./release/youtube-revanced-armeabi-v7a.apk ]; then
+            echo "Successfully created armeabi-v7a APK"
+            ls -lh ./release/youtube-revanced-armeabi-v7a.apk
+          else
+            echo "Warning: armeabi-v7a APK creation failed"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -123,5 +281,20 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: YouTube ReVanced Build ${{ github.run_number }}
           files: ./release/*.apk
+          body: |
+            ## YouTube ReVanced Build
+            
+            **YouTube Version:** ${{ steps.get_version.outputs.version }}
+            
+            ### Available APKs:
+            - `youtube-revanced-universal.apk` - Works on all devices (larger size)
+            - `youtube-revanced-arm64-v8a.apk` - For modern 64-bit ARM devices (recommended)
+            - `youtube-revanced-armeabi-v7a.apk` - For older 32-bit ARM devices
+            
+            ### Installation:
+            1. Uninstall official YouTube app if installed
+            2. Download the appropriate APK for your device
+            3. Install the APK (enable "Install from unknown sources")
+            4. Sign in and enjoy!
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
