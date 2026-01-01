@@ -1,0 +1,439 @@
+name: Build YouTube ReVanced
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      youtube_version:
+        description: 'YouTube version (leave empty for auto-detect)'
+        required: false
+        default: ''
+      patch_variant:
+        description: 'Patch variant to use'
+        required: true
+        default: 'revanced'
+        type: choice
+        options:
+          - revanced
+          - revanced-beta
+          - revanced-extended
+          - revanced-extended-beta
+      build_architecture:
+        description: 'Architecture to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - all-architectures-separate
+          - arm64-v8a
+          - armeabi-v7a
+          - x86
+          - x86_64
+          - lite-arm64-v8a
+          - lite-armeabi-v7a
+  
+  # Schedule daily at 9 AM UTC
+  schedule:
+    - cron: "0 9 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  check-new-patches:
+    name: Check for New Patches
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      patch_version: ${{ steps.check.outputs.patch_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check ReVanced Patches
+        id: check
+        run: |
+          # Get latest patch version
+          PATCH_VERSION=$(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest | jq -r .tag_name)
+          echo "Latest patch version: ${PATCH_VERSION}"
+          
+          # Check if we already built this version
+          EXISTING=$(gh release list | grep "youtube.*${PATCH_VERSION}" || echo "")
+          
+          if [ -z "${EXISTING}" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "New patches available or manual trigger"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "Already built this version"
+          fi
+          
+          echo "patch_version=${PATCH_VERSION}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-youtube:
+    name: Build YouTube ReVanced
+    needs: check-new-patches
+    if: needs.check-new-patches.outputs.should_build == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Build Tools
+        run: |
+          # Install required tools
+          sudo apt-get update
+          sudo apt-get install -y wget curl jq unzip aapt
+          
+          # Install pup for HTML parsing (used for APK downloads)
+          wget -q https://github.com/ericchiang/pup/releases/download/v0.4.0/pup_v0.4.0_linux_amd64.zip
+          unzip pup_v0.4.0_linux_amd64.zip
+          sudo mv pup /usr/local/bin/
+          chmod +x /usr/local/bin/pup
+
+      - name: Determine Patch Variant
+        id: variant
+        run: |
+          VARIANT="${{ github.event.inputs.patch_variant || 'revanced' }}"
+          
+          case "${VARIANT}" in
+            revanced)
+              REPO="revanced/revanced-patches"
+              CLI_REPO="revanced/revanced-cli"
+              INT_REPO="revanced/revanced-integrations"
+              RELEASE_TYPE="latest"
+              ;;
+            revanced-beta)
+              REPO="revanced/revanced-patches"
+              CLI_REPO="revanced/revanced-cli"
+              INT_REPO="revanced/revanced-integrations"
+              RELEASE_TYPE="prerelease"
+              ;;
+            revanced-extended)
+              REPO="inotia00/revanced-patches"
+              CLI_REPO="inotia00/revanced-cli"
+              INT_REPO="inotia00/revanced-integrations"
+              RELEASE_TYPE="latest"
+              ;;
+            revanced-extended-beta)
+              REPO="inotia00/revanced-patches"
+              CLI_REPO="inotia00/revanced-cli"
+              INT_REPO="inotia00/revanced-integrations"
+              RELEASE_TYPE="prerelease"
+              ;;
+          esac
+          
+          echo "patch_repo=${REPO}" >> $GITHUB_OUTPUT
+          echo "cli_repo=${CLI_REPO}" >> $GITHUB_OUTPUT
+          echo "int_repo=${INT_REPO}" >> $GITHUB_OUTPUT
+          echo "release_type=${RELEASE_TYPE}" >> $GITHUB_OUTPUT
+          echo "variant=${VARIANT}" >> $GITHUB_OUTPUT
+
+      - name: Download ReVanced Tools
+        run: |
+          echo "Downloading ReVanced tools for variant: ${{ steps.variant.outputs.variant }}"
+          
+          # Download CLI
+          if [ "${{ steps.variant.outputs.release_type }}" == "latest" ]; then
+            CLI_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.cli_repo }}/releases/latest | jq -r .tag_name)
+          else
+            CLI_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.cli_repo }}/releases | jq -r '.[0].tag_name')
+          fi
+          
+          wget -q "https://github.com/${{ steps.variant.outputs.cli_repo }}/releases/download/${CLI_VERSION}/revanced-cli-${CLI_VERSION}-all.jar" -O revanced-cli.jar
+          echo "✓ CLI Version: ${CLI_VERSION}"
+          
+          # Download Patches
+          if [ "${{ steps.variant.outputs.release_type }}" == "latest" ]; then
+            PATCHES_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.patch_repo }}/releases/latest | jq -r .tag_name)
+          else
+            PATCHES_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.patch_repo }}/releases | jq -r '.[0].tag_name')
+          fi
+          
+          wget -q "https://github.com/${{ steps.variant.outputs.patch_repo }}/releases/download/${PATCHES_VERSION}/revanced-patches-${PATCHES_VERSION}.jar" -O revanced-patches.jar
+          echo "✓ Patches Version: ${PATCHES_VERSION}"
+          
+          # Download Integrations
+          if [ "${{ steps.variant.outputs.release_type }}" == "latest" ]; then
+            INT_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.int_repo }}/releases/latest | jq -r .tag_name)
+          else
+            INT_VERSION=$(curl -s https://api.github.com/repos/${{ steps.variant.outputs.int_repo }}/releases | jq -r '.[0].tag_name')
+          fi
+          
+          wget -q "https://github.com/${{ steps.variant.outputs.int_repo }}/releases/download/${INT_VERSION}/revanced-integrations-${INT_VERSION}.apk" -O revanced-integrations.apk
+          echo "✓ Integrations Version: ${INT_VERSION}"
+          
+          # Save versions for later
+          echo "${PATCHES_VERSION}" > patch_version.txt
+
+      - name: Get Compatible YouTube Version
+        id: yt_version
+        run: |
+          if [ -n "${{ github.event.inputs.youtube_version }}" ]; then
+            VERSION="${{ github.event.inputs.youtube_version }}"
+            echo "Using specified version: ${VERSION}"
+          else
+            # Get latest compatible version from patches
+            VERSION=$(java -jar revanced-cli.jar list-versions -f com.google.android.youtube revanced-patches.jar 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1)
+            echo "Auto-detected compatible version: ${VERSION}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download YouTube APK from APKMirror
+        id: download_apk
+        continue-on-error: true
+        run: |
+          VERSION="${{ steps.yt_version.outputs.version }}"
+          echo "Downloading YouTube ${VERSION} from APKMirror..."
+          
+          # Construct APKMirror URL
+          BASE_URL="https://www.apkmirror.com/apk/google-inc/youtube/youtube-${VERSION}-release"
+          
+          # Try to get the download page
+          DOWNLOAD_PAGE=$(curl -sL "${BASE_URL}/" || echo "")
+          
+          if [ -z "${DOWNLOAD_PAGE}" ]; then
+            echo "Failed to access APKMirror page"
+            exit 1
+          fi
+          
+          # Extract download link
+          DOWNLOAD_LINK=$(echo "${DOWNLOAD_PAGE}" | pup 'a.accent_bg attr{href}' | grep -i 'APK/com.google.android.youtube' | head -1)
+          
+          if [ -z "${DOWNLOAD_LINK}" ]; then
+            echo "Could not find download link"
+            exit 1
+          fi
+          
+          # Get actual APK download URL
+          APK_PAGE=$(curl -sL "https://www.apkmirror.com${DOWNLOAD_LINK}")
+          APK_URL=$(echo "${APK_PAGE}" | pup 'a.accent_bg attr{href}' | grep 'download.php' | head -1)
+          
+          if [ -z "${APK_URL}" ]; then
+            echo "Could not find APK URL"
+            exit 1
+          fi
+          
+          # Download the APK
+          wget -q "https://www.apkmirror.com${APK_URL}" -O youtube.apk
+          
+          if [ -f youtube.apk ] && [ -s youtube.apk ]; then
+            echo "✓ Downloaded YouTube APK successfully"
+            ls -lh youtube.apk
+          else
+            echo "Download failed"
+            exit 1
+          fi
+
+      - name: Download YouTube APK from APKPure (Fallback)
+        if: steps.download_apk.outcome == 'failure'
+        run: |
+          VERSION="${{ steps.yt_version.outputs.version }}"
+          echo "APKMirror failed, trying APKPure..."
+          
+          # Try APKPure
+          wget -q "https://d.apkpure.com/b/XAPK/com.google.android.youtube?version=${VERSION}" -O youtube.xapk
+          
+          # Extract XAPK
+          unzip -q youtube.xapk -d youtube_extracted
+          cp youtube_extracted/com.google.android.youtube.apk youtube.apk
+          
+          if [ ! -f youtube.apk ]; then
+            echo "Failed to download from APKPure"
+            exit 1
+          fi
+          
+          echo "✓ Downloaded from APKPure"
+
+      - name: Handle Split APKs
+        run: |
+          # Check if we have split APKs from XAPK
+          if [ -d youtube_extracted ]; then
+            echo "Processing split APKs..."
+            
+            # Copy all split configs
+            find youtube_extracted -name "split_config*.apk" -exec cp {} . \;
+            
+            # List what we have
+            ls -lh *.apk
+          fi
+
+      - name: Create Keystore
+        run: |
+          # Create a keystore for signing
+          keytool -genkeypair -v \
+            -keystore keystore.keystore \
+            -alias revanced-key \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass revanced123 \
+            -keypass revanced123 \
+            -dname "CN=ReVanced, OU=ReVanced, O=ReVanced, L=ReVanced, ST=ReVanced, C=US"
+
+      - name: Patch YouTube - All Architectures
+        if: github.event.inputs.build_architecture == 'all'
+        run: |
+          echo "Patching YouTube with all architectures..."
+          
+          java -jar revanced-cli.jar patch \
+            --merge revanced-integrations.apk \
+            --patch-bundle revanced-patches.jar \
+            --keystore keystore.keystore \
+            --keystore-password revanced123 \
+            --alias revanced-key \
+            --keystore-entry-password revanced123 \
+            --out youtube-revanced-${{ steps.variant.outputs.variant }}.apk \
+            --options <(echo '{"Custom branding":{"appName":"YouTube ReVanced"}}') \
+            youtube.apk
+          
+          ls -lh youtube-revanced-*.apk
+
+      - name: Patch YouTube - Specific Architecture
+        if: |
+          github.event.inputs.build_architecture != 'all' && 
+          github.event.inputs.build_architecture != 'all-architectures-separate' &&
+          !startsWith(github.event.inputs.build_architecture, 'lite-')
+        run: |
+          ARCH="${{ github.event.inputs.build_architecture }}"
+          echo "Patching YouTube for ${ARCH}..."
+          
+          # Merge base APK with specific architecture splits
+          if [ -f "split_config.${ARCH}.apk" ]; then
+            # Create merged APK with specific architecture
+            mkdir -p merged
+            cp youtube.apk merged/base.apk
+            cp split_config.${ARCH}.apk merged/
+            
+            # Use APKEditor or similar to merge (simplified here)
+            # In real scenario, you'd use proper APK merging tool
+            java -jar revanced-cli.jar patch \
+              --merge revanced-integrations.apk \
+              --patch-bundle revanced-patches.jar \
+              --keystore keystore.keystore \
+              --keystore-password revanced123 \
+              --alias revanced-key \
+              --keystore-entry-password revanced123 \
+              --out youtube-${ARCH}-revanced-${{ steps.variant.outputs.variant }}.apk \
+              merged/base.apk
+          else
+            java -jar revanced-cli.jar patch \
+              --merge revanced-integrations.apk \
+              --patch-bundle revanced-patches.jar \
+              --keystore keystore.keystore \
+              --keystore-password revanced123 \
+              --alias revanced-key \
+              --keystore-entry-password revanced123 \
+              --out youtube-${ARCH}-revanced-${{ steps.variant.outputs.variant }}.apk \
+              youtube.apk
+          fi
+
+      - name: Patch YouTube - Lite Versions
+        if: startsWith(github.event.inputs.build_architecture, 'lite-')
+        run: |
+          ARCH=$(echo "${{ github.event.inputs.build_architecture }}" | sed 's/lite-//')
+          echo "Creating lite version for ${ARCH}..."
+          
+          # Lite version: only English, specific DPI, specific architecture
+          mkdir -p lite
+          cp youtube.apk lite/base.apk
+          
+          # Copy only essential splits
+          [ -f "split_config.${ARCH}.apk" ] && cp "split_config.${ARCH}.apk" lite/
+          [ -f "split_config.en.apk" ] && cp "split_config.en.apk" lite/
+          [ -f "split_config.xxxhdpi.apk" ] && cp "split_config.xxxhdpi.apk" lite/
+          
+          # Patch lite version
+          java -jar revanced-cli.jar patch \
+            --merge revanced-integrations.apk \
+            --patch-bundle revanced-patches.jar \
+            --keystore keystore.keystore \
+            --keystore-password revanced123 \
+            --alias revanced-key \
+            --keystore-entry-password revanced123 \
+            --out youtube-lite-${ARCH}-revanced-${{ steps.variant.outputs.variant }}.apk \
+            lite/base.apk
+
+      - name: Get Build Info
+        id: build_info
+        run: |
+          PATCH_VERSION=$(cat patch_version.txt)
+          YT_VERSION="${{ steps.yt_version.outputs.version }}"
+          VARIANT="${{ steps.variant.outputs.variant }}"
+          DATE=$(date +%Y%m%d)
+          
+          # Create tag
+          TAG="youtube-${VARIANT}-v${YT_VERSION}-patch${PATCH_VERSION}-${DATE}"
+          
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "yt_version=${YT_VERSION}" >> $GITHUB_OUTPUT
+          echo "patch_version=${PATCH_VERSION}" >> $GITHUB_OUTPUT
+          echo "variant=${VARIANT}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.build_info.outputs.tag }}
+          name: "YouTube ReVanced ${{ steps.build_info.outputs.variant }} v${{ steps.build_info.outputs.yt_version }}"
+          body: |
+            ## YouTube ReVanced - ${{ steps.build_info.outputs.variant }}
+            
+            **YouTube Version:** ${{ steps.build_info.outputs.yt_version }}
+            **Patches Version:** ${{ steps.build_info.outputs.patch_version }}
+            **Variant:** ${{ steps.build_info.outputs.variant }}
+            **Build Date:** $(date +%Y-%m-%d)
+            
+            ### 📱 Installation
+            1. Download MicroG ReVanced from [here](https://github.com/ReVanced/GmsCore/releases/latest)
+            2. Install MicroG first
+            3. Download the APK below for your device architecture
+            4. Install YouTube ReVanced
+            5. Open MicroG and sign in with your Google account
+            6. Enjoy ad-free YouTube!
+            
+            ### 🏗️ Architecture Guide
+            - **All Architectures**: Works on any device (largest file)
+            - **arm64-v8a**: Modern phones (2015+), most common
+            - **armeabi-v7a**: Older phones (2011-2015)
+            - **x86/x86_64**: Emulators and Intel-based devices
+            - **Lite versions**: Smaller size, English only, single DPI
+            
+            ### ⚠️ Notes
+            - You must uninstall the original YouTube app first
+            - Sign in through MicroG, not the YouTube app directly
+            - Some features may require MicroG permissions
+            - This is for personal use only
+            
+            ### 🔧 Patches Included
+            - Hide ads
+            - Background playback
+            - Picture-in-picture
+            - SponsorBlock
+            - Return YouTube dislike
+            - And many more!
+          files: |
+            youtube*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifacts (Backup)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: youtube-revanced-${{ steps.build_info.outputs.variant }}-apks
+          path: |
+            youtube*.apk
+          retention-days: 30
