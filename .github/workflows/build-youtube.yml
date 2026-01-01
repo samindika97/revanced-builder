@@ -147,18 +147,18 @@ jobs:
         run: |
           echo "Downloading ReVanced tools for variant: ${{ steps.variant.outputs.variant }}"
           
-          # Function to get latest release tag without jq
+          # Function to get latest release tag
           get_latest_release() {
             curl -s "https://api.github.com/repos/$1/releases/latest" | \
               grep '"tag_name":' | \
-              sed -E 's/.*"tag_name": "([^"]+)".*/\1/'
+              sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/'
           }
           
           get_prerelease() {
             curl -s "https://api.github.com/repos/$1/releases" | \
               grep '"tag_name":' | \
               head -1 | \
-              sed -E 's/.*"tag_name": "([^"]+)".*/\1/'
+              sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/'
           }
           
           # Download CLI
@@ -168,14 +168,26 @@ jobs:
             CLI_VERSION=$(get_prerelease "${{ steps.variant.outputs.cli_repo }}")
           fi
           
-          echo "Downloading CLI version: ${CLI_VERSION}"
-          wget -q "https://github.com/${{ steps.variant.outputs.cli_repo }}/releases/download/${CLI_VERSION}/revanced-cli-${CLI_VERSION}-all.jar" -O revanced-cli.jar || {
-            echo "Error: Failed to download CLI"
+          # Remove 'v' prefix if it exists
+          CLI_VERSION_CLEAN=$(echo "${CLI_VERSION}" | sed 's/^v//')
+          
+          echo "Downloading CLI version: ${CLI_VERSION_CLEAN}"
+          
+          # Try different URL patterns
+          if wget -q "https://github.com/${{ steps.variant.outputs.cli_repo }}/releases/download/v${CLI_VERSION_CLEAN}/revanced-cli-${CLI_VERSION_CLEAN}-all.jar" -O revanced-cli.jar 2>/dev/null; then
+            echo "✓ Downloaded with v prefix"
+          elif wget -q "https://github.com/${{ steps.variant.outputs.cli_repo }}/releases/download/${CLI_VERSION_CLEAN}/revanced-cli-${CLI_VERSION_CLEAN}-all.jar" -O revanced-cli.jar 2>/dev/null; then
+            echo "✓ Downloaded without v prefix"
+          else
+            echo "Error: Failed to download CLI from both URL patterns"
+            echo "Tried:"
+            echo "  - https://github.com/${{ steps.variant.outputs.cli_repo }}/releases/download/v${CLI_VERSION_CLEAN}/revanced-cli-${CLI_VERSION_CLEAN}-all.jar"
+            echo "  - https://github.com/${{ steps.variant.outputs.cli_repo }}/releases/download/${CLI_VERSION_CLEAN}/revanced-cli-${CLI_VERSION_CLEAN}-all.jar"
             exit 1
           }
           
           if [ -f revanced-cli.jar ] && [ -s revanced-cli.jar ]; then
-            echo "✓ CLI Version: ${CLI_VERSION} ($(du -h revanced-cli.jar | cut -f1))"
+            echo "✓ CLI Version: ${CLI_VERSION_CLEAN} ($(du -h revanced-cli.jar | cut -f1))"
           else
             echo "Error: CLI download verification failed"
             exit 1
@@ -188,14 +200,20 @@ jobs:
             PATCHES_VERSION=$(get_prerelease "${{ steps.variant.outputs.patch_repo }}")
           fi
           
-          echo "Downloading Patches version: ${PATCHES_VERSION}"
-          wget -q "https://github.com/${{ steps.variant.outputs.patch_repo }}/releases/download/${PATCHES_VERSION}/revanced-patches-${PATCHES_VERSION}.jar" -O revanced-patches.jar || {
+          PATCHES_VERSION_CLEAN=$(echo "${PATCHES_VERSION}" | sed 's/^v//')
+          echo "Downloading Patches version: ${PATCHES_VERSION_CLEAN}"
+          
+          if wget -q "https://github.com/${{ steps.variant.outputs.patch_repo }}/releases/download/v${PATCHES_VERSION_CLEAN}/revanced-patches-${PATCHES_VERSION_CLEAN}.jar" -O revanced-patches.jar 2>/dev/null; then
+            echo "✓ Downloaded with v prefix"
+          elif wget -q "https://github.com/${{ steps.variant.outputs.patch_repo }}/releases/download/${PATCHES_VERSION_CLEAN}/revanced-patches-${PATCHES_VERSION_CLEAN}.jar" -O revanced-patches.jar 2>/dev/null; then
+            echo "✓ Downloaded without v prefix"
+          else
             echo "Error: Failed to download Patches"
             exit 1
-          }
+          fi
           
           if [ -f revanced-patches.jar ] && [ -s revanced-patches.jar ]; then
-            echo "✓ Patches Version: ${PATCHES_VERSION} ($(du -h revanced-patches.jar | cut -f1))"
+            echo "✓ Patches Version: ${PATCHES_VERSION_CLEAN} ($(du -h revanced-patches.jar | cut -f1))"
           else
             echo "Error: Patches download verification failed"
             exit 1
@@ -208,23 +226,29 @@ jobs:
             INT_VERSION=$(get_prerelease "${{ steps.variant.outputs.int_repo }}")
           fi
           
-          echo "Downloading Integrations version: ${INT_VERSION}"
-          wget -q "https://github.com/${{ steps.variant.outputs.int_repo }}/releases/download/${INT_VERSION}/revanced-integrations-${INT_VERSION}.apk" -O revanced-integrations.apk || {
+          INT_VERSION_CLEAN=$(echo "${INT_VERSION}" | sed 's/^v//')
+          echo "Downloading Integrations version: ${INT_VERSION_CLEAN}"
+          
+          if wget -q "https://github.com/${{ steps.variant.outputs.int_repo }}/releases/download/v${INT_VERSION_CLEAN}/revanced-integrations-${INT_VERSION_CLEAN}.apk" -O revanced-integrations.apk 2>/dev/null; then
+            echo "✓ Downloaded with v prefix"
+          elif wget -q "https://github.com/${{ steps.variant.outputs.int_repo }}/releases/download/${INT_VERSION_CLEAN}/revanced-integrations-${INT_VERSION_CLEAN}.apk" -O revanced-integrations.apk 2>/dev/null; then
+            echo "✓ Downloaded without v prefix"  
+          else
             echo "Error: Failed to download Integrations"
             exit 1
-          }
+          fi
           
           if [ -f revanced-integrations.apk ] && [ -s revanced-integrations.apk ]; then
-            echo "✓ Integrations Version: ${INT_VERSION} ($(du -h revanced-integrations.apk | cut -f1))"
+            echo "✓ Integrations Version: ${INT_VERSION_CLEAN} ($(du -h revanced-integrations.apk | cut -f1))"
           else
             echo "Error: Integrations download verification failed"
             exit 1
           fi
           
           # Save versions for later
-          echo "${PATCHES_VERSION}" > patch_version.txt
-          echo "${CLI_VERSION}" > cli_version.txt
-          echo "${INT_VERSION}" > int_version.txt
+          echo "${PATCHES_VERSION_CLEAN}" > patch_version.txt
+          echo "${CLI_VERSION_CLEAN}" > cli_version.txt
+          echo "${INT_VERSION_CLEAN}" > int_version.txt
           
           echo ""
           echo "✅ All ReVanced tools downloaded successfully!"
