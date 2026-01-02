@@ -30,26 +30,16 @@ jobs:
           
           # Download APKEditor for merging splits
           wget -q -O ./APKEditor.jar https://github.com/REAndroid/APKEditor/releases/download/V1.4.2/APKEditor-1.4.2.jar
-          
-          # Generate keystore for signing APKs
-          echo "Generating keystore..."
-          keytool -genkey -v -keystore ./src/ks.keystore \
-            -alias revanced \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass revanced \
-            -keypass revanced \
-            -dname "CN=ReVanced, OU=GitHub Actions, O=ReVanced, L=GitHub, ST=Actions, C=US"
-          
-          echo "Keystore created successfully"
-          ls -la ./src/
 
       - name: Download ReVanced tools
         run: |
           # Download latest ReVanced CLI and Patches
           wget -q $(curl -s https://api.github.com/repos/revanced/revanced-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
           wget -q $(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".rvp")) | .browser_download_url')
+          
+          # Create keystore - ReVanced CLI will auto-generate if not present
+          # Or let CLI handle signing automatically
+          echo "ReVanced tools downloaded"
 
       - name: Download and Patch YouTube
         run: |
@@ -175,7 +165,6 @@ jobs:
           java -jar *cli*.jar patch \
             -p *.rvp \
             --out=./release/youtube-revanced-universal.apk \
-            --keystore=./src/ks.keystore \
             --purge=true \
             --force \
             ./download/youtube.apk
@@ -234,7 +223,6 @@ jobs:
           java -jar *cli*.jar patch \
             -p *.rvp \
             --out=./release/youtube-revanced-arm64-v8a.apk \
-            --keystore=./src/ks.keystore \
             --purge=true \
             --force \
             ./download/youtube-arm64-v8a.apk
@@ -292,7 +280,6 @@ jobs:
           java -jar *cli*.jar patch \
             -p *.rvp \
             --out=./release/youtube-revanced-armeabi-v7a.apk \
-            --keystore=./src/ks.keystore \
             --purge=true \
             --force \
             ./download/youtube-armeabi-v7a.apk
@@ -355,7 +342,6 @@ jobs:
           java -jar *cli*.jar patch \
             -p *.rvp \
             --out=./release/youtube-revanced-x86_64.apk \
-            --keystore=./src/ks.keystore \
             --purge=true \
             --force \
             ./download/youtube-x86_64.apk
@@ -413,7 +399,6 @@ jobs:
           java -jar *cli*.jar patch \
             -p *.rvp \
             --out=./release/youtube-revanced-x86.apk \
-            --keystore=./src/ks.keystore \
             --purge=true \
             --force \
             ./download/youtube-x86.apk
