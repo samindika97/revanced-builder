@@ -102,17 +102,65 @@ jobs:
             req "$url" "$output"
           }
           
-          # Get compatible version
           green_log "[+] Detecting compatible YouTube version..."
-          version=$(java -jar *cli*.jar list-patches --with-packages --with-versions *.rvp | \
-            awk '/Package name: com.google.android.youtube/{found=1} found && /Compatible versions:/{getline; print $1; exit}')
+
+          version=""
+          attempt=0
           
-          if [ -z "$version" ]; then
-            red_log "[-] Could not detect version, using default"
-            version="19.34.42"
+          # 1️⃣ Try ReVanced CLI compatible versions (authoritative)
+          version=$(java -jar *cli*.jar list-patches --with-packages --with-versions *.rvp | \
+            awk -v pkg="com.google.android.youtube" '
+              BEGIN { found = 0 }
+              /^Index:/ { found = 0 }
+              /Package name:/ { if ($3 == pkg) found = 1 }
+              /Compatible versions:/ {
+                if (found) {
+                  getline
+                  latest = $1
+                  while (getline && $1 ~ /^[0-9]+\./) latest = $1
+                  print latest
+                  exit
+                }
+              }')
+          
+          # 2️⃣ Retry loop (APKMirror fallback, stable only)
+          while [ $attempt -lt 10 ]; do
+            if [[ -z "$version" || $attempt -ne 0 ]]; then
+              version=$(req "https://www.apkmirror.com/uploads/?appcategory=youtube" - | \
+                ./pup 'div.widget_appmanager_recentpostswidget h5 a.fontBlack text{}' | \
+                grep -Evi 'alpha|beta' | \
+                grep -oPi '\b\d+(\.\d+)+\b' | \
+                sed -n "$((attempt + 1))p")
+            fi
+          
+            if [[ -z "$version" ]]; then
+              ((attempt++))
+              continue
+            fi
+          
+            version_dash=$(echo "$version" | sed 's/\./-/g')
+            green_log "[+] Trying YouTube version: $version"
+          
+            if dl_apk "https://www.apkmirror.com/apk/google-inc/youtube/youtube-${version_dash}-release/" \
+                      'BUNDLE<\/span>' \
+                      "youtube.apkm" \
+                      "Bundle_extract"; then
+              break
+            fi
+          
+            red_log "[-] Failed to download $version, trying older version"
+            rm -f ./download/youtube.apkm
+            unset version
+            ((attempt++))
+          done
+          
+          if [[ ! -f "./download/youtube.apkm" ]]; then
+            red_log "[-] Failed to download a compatible YouTube version"
+            exit 1
           fi
           
-          green_log "[+] YouTube version: $version"
+          green_log "[+] Selected YouTube version: $version"
+
           
           # Convert version to dash format
           version_dash=$(echo "$version" | tr -d ' ' | sed 's/\./-/g')
