@@ -3,13 +3,111 @@ name: Build YouTube ReVanced
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * 0'  # Run weekly on Sunday
+    - cron: '0 0 * * 0'  # Check weekly on Sunday
 
 jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.new_patch }}
+      cli_version: ${{ steps.versions.outputs.cli_version }}
+      patch_version: ${{ steps.versions.outputs.patch_version }}
+      patch_notes: ${{ steps.versions.outputs.patch_notes }}
+    
+    steps:
+      - name: Check for patch updates
+        id: check
+        run: |
+          # Get date from a GitHub release
+          get_date() {
+            local repo=$1 release_type=$2 pattern=$3
+            json=$(wget -qO- "https://api.github.com/repos/$repo/releases")
+            
+            case "$release_type" in
+              latest)
+                updated_at=$(echo "$json" | jq -r 'first(.[] | select(.prerelease == false) | .assets[] | select(.name | test("'"$pattern"'")) | .updated_at)')
+                ;;
+              prerelease)
+                updated_at=$(echo "$json" | jq -r 'first(.[] | select(.prerelease == true) | .assets[] | select(.name | test("'"$pattern"'")) | .updated_at)')
+                ;;
+              all)
+                updated_at=$(echo "$json" | jq -r 'first(.[] | .assets[] | select(.name | test("'"$pattern"'")) | .updated_at)')
+                ;;
+              *)
+                updated_at=$(echo "$json" | jq -r 'first(.[] | select(.tag_name == "'"$release_type"'") | .assets[] | select(.name | test("'"$pattern"'")) | .updated_at)')
+                ;;
+            esac
+            echo "$updated_at"
+          }
+          
+          # Check if new patches are available
+          checker() {
+            local repo=$1 release_type=$2 check_pattern=$3
+            local date1 date2 date1_sec date2_sec
+            
+            # Get ReVanced patch update date
+            date1=$(get_date "$repo" "$release_type" "^(.*\\.jar|.*\\.rvp)$")
+            
+            # Get your repository's last release date
+            date2=$(get_date "${{ github.repository }}" "all" "$check_pattern")
+            
+            if [ -z "$date1" ]; then
+              echo "::error::Failed to get ReVanced release date"
+              echo "new_patch=0" >> $GITHUB_OUTPUT
+              return
+            fi
+            
+            date1_sec=$(date -d "$date1" +%s)
+            
+            # If no previous releases or new patch is available
+            if [ -z "$date2" ]; then
+              echo "new_patch=1" >> $GITHUB_OUTPUT
+              echo "::notice::No previous builds found, building..."
+            else
+              date2_sec=$(date -d "$date2" +%s)
+              
+              if [ "$date1_sec" -gt "$date2_sec" ]; then
+                echo "new_patch=1" >> $GITHUB_OUTPUT
+                echo "::notice::New patch detected (ReVanced: $date1, Last build: $date2), building..."
+              else
+                echo "new_patch=0" >> $GITHUB_OUTPUT
+                echo "::notice::No new patches (ReVanced: $date1, Last build: $date2), skipping build."
+              fi
+            fi
+          }
+          
+          # Check for updates in revanced-patches
+          checker "revanced/revanced-patches" "latest" "youtube-revanced.*\\.apk"
+
+      - name: Get version information
+        id: versions
+        if: steps.check.outputs.new_patch == '1' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Get CLI version
+          CLI_RELEASE=$(curl -s https://api.github.com/repos/revanced/revanced-cli/releases/latest)
+          CLI_VERSION=$(echo "$CLI_RELEASE" | jq -r '.tag_name')
+          echo "cli_version=$CLI_VERSION" >> $GITHUB_OUTPUT
+          
+          # Get Patches version and notes
+          PATCH_RELEASE=$(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest)
+          PATCH_VERSION=$(echo "$PATCH_RELEASE" | jq -r '.tag_name')
+          PATCH_NOTES=$(echo "$PATCH_RELEASE" | jq -r '.body')
+          
+          echo "patch_version=$PATCH_VERSION" >> $GITHUB_OUTPUT
+          
+          # Store patch notes (multiline safe)
+          {
+            echo "patch_notes<<EOF"
+            echo "$PATCH_NOTES"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
   build:
+    needs: check-updates
+    if: needs.check-updates.outputs.should_build == '1' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required for creating releases
+      contents: write
     
     steps:
       - name: Checkout repository
@@ -39,33 +137,7 @@ jobs:
           wget -q $(curl -s https://api.github.com/repos/revanced/revanced-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
           wget -q $(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".rvp")) | .browser_download_url')
           
-          # Create keystore - ReVanced CLI will auto-generate if not present
-          # Or let CLI handle signing automatically
           echo "ReVanced tools downloaded"
-          
-      - name: Collect release notes
-        run: |
-          echo "Fetching ReVanced release notes..."
-
-          # ReVanced CLI info
-          CLI_RELEASE=$(curl -s https://api.github.com/repos/revanced/revanced-cli/releases/latest)
-          CLI_VERSION=$(echo "$CLI_RELEASE" | jq -r '.tag_name')
-
-          # ReVanced patches info
-          PATCH_RELEASE=$(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest)
-          PATCH_VERSION=$(echo "$PATCH_RELEASE" | jq -r '.tag_name')
-          PATCH_NOTES=$(echo "$PATCH_RELEASE" | jq -r '.body')
-
-          # Save for later steps
-          echo "CLI_VERSION=$CLI_VERSION" >> $GITHUB_ENV
-          echo "PATCH_VERSION=$PATCH_VERSION" >> $GITHUB_ENV
-
-          # Store patch notes (multiline safe)
-          {
-            echo "PATCH_NOTES<<EOF"
-            echo "$PATCH_NOTES"
-            echo "EOF"
-          } >> $GITHUB_ENV
 
       - name: Download and Patch YouTube
         run: |
@@ -131,7 +203,7 @@ jobs:
           version=""
           attempt=0
           
-          # 1️⃣ Try ReVanced CLI compatible versions (authoritative)
+          # Try ReVanced CLI compatible versions
           version=$(java -jar *cli*.jar list-patches --with-packages --with-versions *.rvp | \
             awk -v pkg="com.google.android.youtube" '
               BEGIN { found = 0 }
@@ -147,7 +219,7 @@ jobs:
                 }
               }')
           
-          # 2️⃣ Retry loop (APKMirror fallback, stable only)
+          # Retry loop (APKMirror fallback)
           while [ $attempt -lt 10 ]; do
             if [[ -z "$version" || $attempt -ne 0 ]]; then
               version=$(req "https://www.apkmirror.com/uploads/?appcategory=youtube" - | \
@@ -184,30 +256,9 @@ jobs:
           fi
           
           green_log "[+] Selected YouTube version: $version"
-
           
-          # Convert version to dash format
-          version_dash=$(echo "$version" | tr -d ' ' | sed 's/\./-/g')
-          
-          # Download YouTube APK
-          green_log "[+] Downloading YouTube $version..."
-          url_regexp='BUNDLE<\/span>'
-          
-          if ! dl_apk "https://www.apkmirror.com/apk/google-inc/youtube/youtube-${version_dash}-release/" \
-                      "$url_regexp" \
-                      "youtube.apkm" \
-                      "Bundle_extract"; then
-            red_log "[-] Failed to download YouTube APK"
-            exit 1
-          fi
-          
-          if [[ ! -f "./download/youtube.apkm" ]]; then
-            red_log "[-] YouTube APK not found after download"
-            exit 1
-          fi
-          
-          green_log "[+] Successfully downloaded YouTube APK"
-          ls -lh ./download/youtube.apkm
+          # Save version for release notes
+          echo "YOUTUBE_VERSION=$version" >> $GITHUB_ENV
           
           # Extract bundle
           green_log "[+] Extracting APK bundle..."
@@ -262,26 +313,19 @@ jobs:
           
           green_log "[+] Creating arm64-v8a APK..."
           
-          # Use split_editor logic with EXCLUDE approach
           mkdir -p ./download/youtube-arm64-v8a
-          
-          # Copy base.apk
           cp ./download/youtube/base.apk ./download/youtube-arm64-v8a/
           
-          # Define architectures to EXCLUDE (keep arm64-v8a)
           EXCLUDE_ARCHS="armeabi_v7a x86 x86_64"
           
-          # Copy all splits except excluded architectures
           for file in ./download/youtube/*.apk; do
             filename=$(basename "$file")
             basename_no_ext="${filename%.apk}"
             
-            # Skip base.apk (already copied)
             if [[ "$filename" == "base.apk" ]]; then
               continue
             fi
             
-            # Check if this file should be excluded
             should_exclude=false
             for arch in $EXCLUDE_ARCHS; do
               if [[ "$basename_no_ext" == "split_config.$arch" ]]; then
@@ -290,7 +334,6 @@ jobs:
               fi
             done
             
-            # If not excluded, copy it
             if [ "$should_exclude" = false ]; then
               cp -f "$file" ./download/youtube-arm64-v8a/
             fi
@@ -298,8 +341,6 @@ jobs:
           
           green_log "[+] Files included in arm64-v8a build:"
           ls -la ./download/youtube-arm64-v8a/
-          echo ""
-          green_log "[+] Total files: $(ls -1 ./download/youtube-arm64-v8a/ | wc -l)"
           
           green_log "[+] Merging splits..."
           java -jar ./APKEditor.jar m -i ./download/youtube-arm64-v8a -o ./download/youtube-arm64-v8a.apk
@@ -308,8 +349,6 @@ jobs:
             red_log "[-] Failed to create arm64-v8a APK"
             exit 1
           fi
-          
-          green_log "[+] Merged APK size: $(du -h ./download/youtube-arm64-v8a.apk | cut -f1)"
           
           green_log "[+] Patching arm64-v8a APK..."
           java -jar *cli*.jar patch \
@@ -321,7 +360,6 @@ jobs:
           
           if [[ -f ./release/youtube-revanced-arm64-v8a.apk ]]; then
             green_log "[+] Successfully created arm64-v8a APK"
-            green_log "[+] Final APK size: $(du -h ./release/youtube-revanced-arm64-v8a.apk | cut -f1)"
           else
             red_log "[-] Failed to create arm64-v8a APK"
           fi
@@ -334,24 +372,18 @@ jobs:
           green_log "[+] Creating armeabi-v7a APK..."
           
           mkdir -p ./download/youtube-armeabi-v7a
-          
-          # Copy base.apk
           cp ./download/youtube/base.apk ./download/youtube-armeabi-v7a/
           
-          # Define architectures to EXCLUDE (keep armeabi-v7a)
           EXCLUDE_ARCHS="arm64_v8a x86 x86_64"
           
-          # Copy all splits except excluded architectures
           for file in ./download/youtube/*.apk; do
             filename=$(basename "$file")
             basename_no_ext="${filename%.apk}"
             
-            # Skip base.apk (already copied)
             if [[ "$filename" == "base.apk" ]]; then
               continue
             fi
             
-            # Check if this file should be excluded
             should_exclude=false
             for arch in $EXCLUDE_ARCHS; do
               if [[ "$basename_no_ext" == "split_config.$arch" ]]; then
@@ -360,16 +392,10 @@ jobs:
               fi
             done
             
-            # If not excluded, copy it
             if [ "$should_exclude" = false ]; then
               cp -f "$file" ./download/youtube-armeabi-v7a/
             fi
           done
-          
-          green_log "[+] Files included in armeabi-v7a build:"
-          ls -la ./download/youtube-armeabi-v7a/
-          echo ""
-          green_log "[+] Total files: $(ls -1 ./download/youtube-armeabi-v7a/ | wc -l)"
           
           green_log "[+] Merging splits..."
           java -jar ./APKEditor.jar m -i ./download/youtube-armeabi-v7a -o ./download/youtube-armeabi-v7a.apk
@@ -378,8 +404,6 @@ jobs:
             red_log "[-] Failed to create armeabi-v7a APK"
             exit 1
           fi
-          
-          green_log "[+] Merged APK size: $(du -h ./download/youtube-armeabi-v7a.apk | cut -f1)"
           
           green_log "[+] Patching armeabi-v7a APK..."
           java -jar *cli*.jar patch \
@@ -391,7 +415,6 @@ jobs:
           
           if [[ -f ./release/youtube-revanced-armeabi-v7a.apk ]]; then
             green_log "[+] Successfully created armeabi-v7a APK"
-            green_log "[+] Final APK size: $(du -h ./release/youtube-revanced-armeabi-v7a.apk | cut -f1)"
           else
             red_log "[-] Failed to create armeabi-v7a APK"
           fi
@@ -404,36 +427,26 @@ jobs:
           green_log "[+] Creating x86_64 APK..."
           
           mkdir -p ./download/youtube-x86_64
-          
-          # Copy base.apk
           cp ./download/youtube/base.apk ./download/youtube-x86_64/
           
-          # Copy only x86_64 and exclude other architectures
           for file in ./download/youtube/*.apk; do
             filename=$(basename "$file")
             basename_no_ext="${filename%.apk}"
             
-            # Skip base.apk (already copied)
             if [[ "$filename" == "base.apk" ]]; then
               continue
             fi
             
-            # Exclude other architectures
             if [[ "$basename_no_ext" =~ (arm64_v8a|armeabi_v7a) ]] && [[ ! "$basename_no_ext" =~ x86_64 ]]; then
               continue
             fi
             
-            # Skip x86 (without _64)
             if [[ "$basename_no_ext" == "split_config.x86" ]]; then
               continue
             fi
             
-            # Copy everything else (x86_64, language, dpi configs)
             cp -f "$file" ./download/youtube-x86_64/
           done
-          
-          green_log "[+] Files included in x86_64 build:"
-          ls -la ./download/youtube-x86_64/
           
           green_log "[+] Merging splits..."
           java -jar ./APKEditor.jar m -i ./download/youtube-x86_64 -o ./download/youtube-x86_64.apk
@@ -453,7 +466,6 @@ jobs:
           
           if [[ -f ./release/youtube-revanced-x86_64.apk ]]; then
             green_log "[+] Successfully created x86_64 APK"
-            ls -lh ./release/youtube-revanced-x86_64.apk
           else
             red_log "[-] Failed to create x86_64 APK"
           fi
@@ -466,31 +478,22 @@ jobs:
           green_log "[+] Creating x86 APK..."
           
           mkdir -p ./download/youtube-x86
-          
-          # Copy base.apk
           cp ./download/youtube/base.apk ./download/youtube-x86/
           
-          # Copy only x86 and exclude other architectures
           for file in ./download/youtube/*.apk; do
             filename=$(basename "$file")
             basename_no_ext="${filename%.apk}"
             
-            # Skip base.apk (already copied)
             if [[ "$filename" == "base.apk" ]]; then
               continue
             fi
             
-            # Exclude other architectures
             if [[ "$basename_no_ext" =~ (arm64_v8a|armeabi_v7a|x86_64) ]]; then
               continue
             fi
             
-            # Copy everything else (x86, language, dpi configs)
             cp -f "$file" ./download/youtube-x86/
           done
-          
-          green_log "[+] Files included in x86 build:"
-          ls -la ./download/youtube-x86/
           
           green_log "[+] Merging splits..."
           java -jar ./APKEditor.jar m -i ./download/youtube-x86 -o ./download/youtube-x86.apk
@@ -510,7 +513,6 @@ jobs:
           
           if [[ -f ./release/youtube-revanced-x86.apk ]]; then
             green_log "[+] Successfully created x86 APK"
-            ls -lh ./release/youtube-revanced-x86.apk
           else
             red_log "[-] Failed to create x86 APK"
           fi
@@ -528,29 +530,25 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: github.event_name == 'workflow_dispatch'
         with:
           tag_name: v${{ github.run_number }}
           name: YouTube ReVanced Build ${{ github.run_number }}
           files: ./release/*.apk
           body: |
             ## YouTube ReVanced Build
-
-            **Built on:** ${{ github.event.head_commit.timestamp }}
-
+            
+            **Built on:** ${{ github.event.repository.updated_at }}
             **YouTube version:** ${{ env.YOUTUBE_VERSION }}
-            **ReVanced CLI:** ${{ env.CLI_VERSION }}
-            **ReVanced Patches:** ${{ env.PATCH_VERSION }}
-
+            **ReVanced CLI:** ${{ needs.check-updates.outputs.cli_version }}
+            **ReVanced Patches:** ${{ needs.check-updates.outputs.patch_version }}
+            
             ---
-
-            ## What’s new in this release
-
-            ${{ env.PATCH_NOTES }}
-
+            
+            ## What's new in this release
+            
+            ${{ needs.check-updates.outputs.patch_notes }}
+            
             ---
-            ## YouTube ReVanced Build
-
             
             ### Available APKs:
             - `youtube-revanced-universal.apk` - Works on all devices (larger size)
