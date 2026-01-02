@@ -3,7 +3,7 @@ name: Build YouTube ReVanced
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * 0'  # Check weekly on Sunday
+    - cron: '0 0 * * *'  # Check daily at midnight UTC
 
 jobs:
   check-updates:
