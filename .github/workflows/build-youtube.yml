@@ -42,6 +42,30 @@ jobs:
           # Create keystore - ReVanced CLI will auto-generate if not present
           # Or let CLI handle signing automatically
           echo "ReVanced tools downloaded"
+          
+      - name: Collect release notes
+        run: |
+          echo "Fetching ReVanced release notes..."
+
+          # ReVanced CLI info
+          CLI_RELEASE=$(curl -s https://api.github.com/repos/revanced/revanced-cli/releases/latest)
+          CLI_VERSION=$(echo "$CLI_RELEASE" | jq -r '.tag_name')
+
+          # ReVanced patches info
+          PATCH_RELEASE=$(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest)
+          PATCH_VERSION=$(echo "$PATCH_RELEASE" | jq -r '.tag_name')
+          PATCH_NOTES=$(echo "$PATCH_RELEASE" | jq -r '.body')
+
+          # Save for later steps
+          echo "CLI_VERSION=$CLI_VERSION" >> $GITHUB_ENV
+          echo "PATCH_VERSION=$PATCH_VERSION" >> $GITHUB_ENV
+
+          # Store patch notes (multiline safe)
+          {
+            echo "PATCH_NOTES<<EOF"
+            echo "$PATCH_NOTES"
+            echo "EOF"
+          } >> $GITHUB_ENV
 
       - name: Download and Patch YouTube
         run: |
@@ -511,8 +535,22 @@ jobs:
           files: ./release/*.apk
           body: |
             ## YouTube ReVanced Build
-            
+
             **Built on:** ${{ github.event.head_commit.timestamp }}
+
+            **YouTube version:** ${{ env.YOUTUBE_VERSION }}
+            **ReVanced CLI:** ${{ env.CLI_VERSION }}
+            **ReVanced Patches:** ${{ env.PATCH_VERSION }}
+
+            ---
+
+            ## What’s new in this release
+
+            ${{ env.PATCH_NOTES }}
+
+            ---
+            ## YouTube ReVanced Build
+
             
             ### Available APKs:
             - `youtube-revanced-universal.apk` - Works on all devices (larger size)
