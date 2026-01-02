@@ -21,7 +21,7 @@ jobs:
 
       - name: Setup dependencies
         run: |
-          mkdir -p ./release ./download
+          mkdir -p ./release ./download ./src
           
           # Download pup for HTML parsing
           wget -q -O ./pup.zip https://github.com/ericchiang/pup/releases/download/v0.4.0/pup_v0.4.0_linux_amd64.zip
@@ -30,6 +30,20 @@ jobs:
           
           # Download APKEditor for merging splits
           wget -q -O ./APKEditor.jar https://github.com/REAndroid/APKEditor/releases/download/V1.4.2/APKEditor-1.4.2.jar
+          
+          # Generate keystore for signing APKs
+          echo "Generating keystore..."
+          keytool -genkey -v -keystore ./src/ks.keystore \
+            -alias revanced \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass revanced \
+            -keypass revanced \
+            -dname "CN=ReVanced, OU=GitHub Actions, O=ReVanced, L=GitHub, ST=Actions, C=US"
+          
+          echo "Keystore created successfully"
+          ls -la ./src/
 
       - name: Download ReVanced tools
         run: |
