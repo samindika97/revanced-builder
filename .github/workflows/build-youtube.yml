@@ -149,6 +149,11 @@ jobs:
           
           green_log "[+] Successfully extracted bundle"
           ls -la ./download/youtube/
+          echo ""
+          green_log "[+] Available split configurations:"
+          ls -1 ./download/youtube/*.apk | grep -v base.apk | sort
+          echo ""
+          green_log "[+] Total APK files in bundle: $(ls -1 ./download/youtube/*.apk | wc -l)"
 
       - name: Build Universal APK
         run: |
@@ -185,13 +190,16 @@ jobs:
           
           green_log "[+] Creating arm64-v8a APK..."
           
-          # Use split_editor logic
+          # Use split_editor logic with EXCLUDE approach
           mkdir -p ./download/youtube-arm64-v8a
           
           # Copy base.apk
           cp ./download/youtube/base.apk ./download/youtube-arm64-v8a/
           
-          # Copy only arm64-v8a and exclude other architectures
+          # Define architectures to EXCLUDE (keep arm64-v8a)
+          EXCLUDE_ARCHS="armeabi_v7a x86 x86_64"
+          
+          # Copy all splits except excluded architectures
           for file in ./download/youtube/*.apk; do
             filename=$(basename "$file")
             basename_no_ext="${filename%.apk}"
@@ -201,17 +209,25 @@ jobs:
               continue
             fi
             
-            # Exclude other architectures
-            if [[ "$basename_no_ext" =~ (armeabi_v7a|x86|x86_64) ]]; then
-              continue
-            fi
+            # Check if this file should be excluded
+            should_exclude=false
+            for arch in $EXCLUDE_ARCHS; do
+              if [[ "$basename_no_ext" == "split_config.$arch" ]]; then
+                should_exclude=true
+                break
+              fi
+            done
             
-            # Copy everything else (arm64-v8a, language, dpi configs)
-            cp -f "$file" ./download/youtube-arm64-v8a/
+            # If not excluded, copy it
+            if [ "$should_exclude" = false ]; then
+              cp -f "$file" ./download/youtube-arm64-v8a/
+            fi
           done
           
           green_log "[+] Files included in arm64-v8a build:"
           ls -la ./download/youtube-arm64-v8a/
+          echo ""
+          green_log "[+] Total files: $(ls -1 ./download/youtube-arm64-v8a/ | wc -l)"
           
           green_log "[+] Merging splits..."
           java -jar ./APKEditor.jar m -i ./download/youtube-arm64-v8a -o ./download/youtube-arm64-v8a.apk
@@ -220,6 +236,8 @@ jobs:
             red_log "[-] Failed to create arm64-v8a APK"
             exit 1
           fi
+          
+          green_log "[+] Merged APK size: $(du -h ./download/youtube-arm64-v8a.apk | cut -f1)"
           
           green_log "[+] Patching arm64-v8a APK..."
           java -jar *cli*.jar patch \
@@ -231,7 +249,7 @@ jobs:
           
           if [[ -f ./release/youtube-revanced-arm64-v8a.apk ]]; then
             green_log "[+] Successfully created arm64-v8a APK"
-            ls -lh ./release/youtube-revanced-arm64-v8a.apk
+            green_log "[+] Final APK size: $(du -h ./release/youtube-revanced-arm64-v8a.apk | cut -f1)"
           else
             red_log "[-] Failed to create arm64-v8a APK"
           fi
@@ -248,7 +266,10 @@ jobs:
           # Copy base.apk
           cp ./download/youtube/base.apk ./download/youtube-armeabi-v7a/
           
-          # Copy only armeabi-v7a and exclude other architectures
+          # Define architectures to EXCLUDE (keep armeabi-v7a)
+          EXCLUDE_ARCHS="arm64_v8a x86 x86_64"
+          
+          # Copy all splits except excluded architectures
           for file in ./download/youtube/*.apk; do
             filename=$(basename "$file")
             basename_no_ext="${filename%.apk}"
@@ -258,17 +279,25 @@ jobs:
               continue
             fi
             
-            # Exclude other architectures
-            if [[ "$basename_no_ext" =~ (arm64_v8a|x86|x86_64) ]]; then
-              continue
-            fi
+            # Check if this file should be excluded
+            should_exclude=false
+            for arch in $EXCLUDE_ARCHS; do
+              if [[ "$basename_no_ext" == "split_config.$arch" ]]; then
+                should_exclude=true
+                break
+              fi
+            done
             
-            # Copy everything else (armeabi-v7a, language, dpi configs)
-            cp -f "$file" ./download/youtube-armeabi-v7a/
+            # If not excluded, copy it
+            if [ "$should_exclude" = false ]; then
+              cp -f "$file" ./download/youtube-armeabi-v7a/
+            fi
           done
           
           green_log "[+] Files included in armeabi-v7a build:"
           ls -la ./download/youtube-armeabi-v7a/
+          echo ""
+          green_log "[+] Total files: $(ls -1 ./download/youtube-armeabi-v7a/ | wc -l)"
           
           green_log "[+] Merging splits..."
           java -jar ./APKEditor.jar m -i ./download/youtube-armeabi-v7a -o ./download/youtube-armeabi-v7a.apk
@@ -277,6 +306,8 @@ jobs:
             red_log "[-] Failed to create armeabi-v7a APK"
             exit 1
           fi
+          
+          green_log "[+] Merged APK size: $(du -h ./download/youtube-armeabi-v7a.apk | cut -f1)"
           
           green_log "[+] Patching armeabi-v7a APK..."
           java -jar *cli*.jar patch \
@@ -288,7 +319,7 @@ jobs:
           
           if [[ -f ./release/youtube-revanced-armeabi-v7a.apk ]]; then
             green_log "[+] Successfully created armeabi-v7a APK"
-            ls -lh ./release/youtube-revanced-armeabi-v7a.apk
+            green_log "[+] Final APK size: $(du -h ./release/youtube-revanced-armeabi-v7a.apk | cut -f1)"
           else
             red_log "[-] Failed to create armeabi-v7a APK"
           fi
