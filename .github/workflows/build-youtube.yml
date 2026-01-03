@@ -75,7 +75,7 @@ jobs:
 
   build:
     needs: check-updates
-    if: needs.check-updates.outputs.should_build == '1' || github.event_name == 'workflow_dispatch'
+    if: needs.check-updates.outputs.should_build == '1'
     runs-on: ubuntu-latest
     permissions:
       contents: write
