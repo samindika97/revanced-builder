@@ -19,7 +19,13 @@ jobs:
         id: check
         run: |
           set -e
-      
+          # Force build on manual trigger
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "::notice::Manual run requested. Forcing build."
+            echo "new_patch=1" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           # Latest ReVanced patches version
           PATCH_VERSION=$(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest | jq -r .tag_name)
       
@@ -52,7 +58,7 @@ jobs:
 
       - name: Get version information
         id: versions
-        if: steps.check.outputs.new_patch == '1' || github.event_name == 'workflow_dispatch'
+        if: steps.check.outputs.new_patch == '1' 
         run: |
           # Get CLI version
           CLI_RELEASE=$(curl -s https://api.github.com/repos/revanced/revanced-cli/releases/latest)
