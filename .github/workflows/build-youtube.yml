@@ -18,66 +18,37 @@ jobs:
       - name: Check for patch updates
         id: check
         run: |
-          # Get date from a GitHub release
-          get_date() {
-            local repo=$1 release_type=$2 pattern=$3
-            json=$(wget -qO- "https://api.github.com/repos/$repo/releases")
-            
-            case "$release_type" in
-              latest)
-                updated_at=$(echo "$json" | jq -r --arg pattern "$pattern" 'first(.[] | select(.prerelease == false) | .assets[] | select(.name | test($pattern)) | .updated_at)')
-                ;;
-              prerelease)
-                updated_at=$(echo "$json" | jq -r --arg pattern "$pattern" 'first(.[] | select(.prerelease == true) | .assets[] | select(.name | test($pattern)) | .updated_at)')
-                ;;
-              all)
-                updated_at=$(echo "$json" | jq -r --arg pattern "$pattern" 'first(.[] | .assets[] | select(.name | test($pattern)) | .updated_at)')
-                ;;
-              *)
-                updated_at=$(echo "$json" | jq -r --arg release_type "$release_type" --arg pattern "$pattern" 'first(.[] | select(.tag_name == $release_type) | .assets[] | select(.name | test($pattern)) | .updated_at)')
-                ;;
-            esac
-            echo "$updated_at"
-          }
-          
-          # Check if new patches are available
-          checker() {
-            local repo=$1 release_type=$2 check_pattern=$3
-            local date1 date2 date1_sec date2_sec
-            
-            # Get ReVanced patch update date
-            date1=$(get_date "$repo" "$release_type" "^(.*\\.jar|.*\\.rvp)$")
-            
-            # Get your repository's last release date
-            date2=$(get_date "${{ github.repository }}" "all" "$check_pattern")
-            
-            if [ -z "$date1" ]; then
-              echo "::error::Failed to get ReVanced release date"
+          set -e
+      
+          # Latest ReVanced patches version
+          PATCH_VERSION=$(curl -s https://api.github.com/repos/revanced/revanced-patches/releases/latest | jq -r .tag_name)
+      
+          if [ -z "$PATCH_VERSION" ] || [ "$PATCH_VERSION" = "null" ]; then
+            echo "::error::Failed to fetch ReVanced patches version"
+            echo "new_patch=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+      
+          echo "Latest ReVanced patches version: $PATCH_VERSION"
+      
+          # Get latest release from this repo (if exists)
+          LAST_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest || true)
+      
+          if echo "$LAST_RELEASE" | jq -e '.tag_name' >/dev/null 2>&1; then
+            LAST_TAG=$(echo "$LAST_RELEASE" | jq -r .tag_name)
+            echo "Last build tag: $LAST_TAG"
+      
+            if [[ "$LAST_TAG" == *"$PATCH_VERSION"* ]]; then
+              echo "::notice::No new patches. Skipping build."
               echo "new_patch=0" >> $GITHUB_OUTPUT
-              return
-            fi
-            
-            date1_sec=$(date -d "$date1" +%s)
-            
-            # If no previous releases or new patch is available
-            if [ -z "$date2" ]; then
-              echo "new_patch=1" >> $GITHUB_OUTPUT
-              echo "::notice::No previous builds found, building..."
             else
-              date2_sec=$(date -d "$date2" +%s)
-              
-              if [ "$date1_sec" -gt "$date2_sec" ]; then
-                echo "new_patch=1" >> $GITHUB_OUTPUT
-                echo "::notice::New patch detected (ReVanced: $date1, Last build: $date2), building..."
-              else
-                echo "new_patch=0" >> $GITHUB_OUTPUT
-                echo "::notice::No new patches (ReVanced: $date1, Last build: $date2), skipping build."
-              fi
+              echo "::notice::New patch version detected. Building..."
+              echo "new_patch=1" >> $GITHUB_OUTPUT
             fi
-          }
-          
-          # Check for updates in revanced-patches
-          checker "revanced/revanced-patches" "latest" "^(.*\\.jar|.*\\.rvp)$"
+          else
+            echo "::notice::No previous release found. Building first release."
+            echo "new_patch=1" >> $GITHUB_OUTPUT
+          fi
 
       - name: Get version information
         id: versions
@@ -531,8 +502,9 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ github.run_number }}
-          name: YouTube ReVanced Build ${{ github.run_number }}
+          tag_name: revanced-patches-${{ needs.check-updates.outputs.patch_version }}
+          name: YouTube ReVanced (Patches ${{ needs.check-updates.outputs.patch_version }})
+
           files: ./release/*.apk
           body: |
             ## YouTube ReVanced Build
