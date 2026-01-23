@@ -283,7 +283,7 @@ jobs:
             --force \
             --keystore=~/.android/revanced.keystore \
             --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
-            --alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-alias="${{ secrets.KEY_ALIAS }}" \
             --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
             ./download/youtube.apk
           
@@ -401,9 +401,9 @@ jobs:
             --force \
             --keystore=~/.android/revanced.keystore \
             --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
-            --alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-alias="${{ secrets.KEY_ALIAS }}" \
             --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
-            ./download/youtube.apk
+            ./download/youtube-armeabi-v7a.apk
           
           if [[ -f ./release/youtube-revanced-armeabi-v7a.apk ]]; then
             green_log "[+] Successfully created armeabi-v7a APK"
@@ -456,9 +456,9 @@ jobs:
             --force \
             --keystore=~/.android/revanced.keystore \
             --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
-            --alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-alias="${{ secrets.KEY_ALIAS }}" \
             --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
-            ./download/youtube.apk
+            ./download/youtube-x86_64.apk
 
           if [[ -f ./release/youtube-revanced-x86_64.apk ]]; then
             green_log "[+] Successfully created x86_64 APK"
@@ -507,9 +507,9 @@ jobs:
             --force \
             --keystore=~/.android/revanced.keystore \
             --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
-            --alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-alias="${{ secrets.KEY_ALIAS }}" \
             --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
-            ./download/youtube.apk
+            ./download/youtube-x86.apk
           
           if [[ -f ./release/youtube-revanced-x86.apk ]]; then
             green_log "[+] Successfully created x86 APK"
