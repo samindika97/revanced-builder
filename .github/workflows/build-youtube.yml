@@ -96,6 +96,13 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      - name: Setup signing keystore
+        run: |
+          mkdir -p ~/.android
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ~/.android/revanced.keystore
+          echo "Keystore created successfully"
+          ls -l ~/.android/revanced.keystore
+
       - name: Setup dependencies
         run: |
           mkdir -p ./release ./download ./src
@@ -274,6 +281,10 @@ jobs:
             --out=./release/youtube-revanced-universal.apk \
             --purge=true \
             --force \
+            --keystore=~/.android/revanced.keystore \
+            --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
+            --alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
             ./download/youtube.apk
           
           if [[ -f ./release/youtube-revanced-universal.apk ]]; then
@@ -388,7 +399,11 @@ jobs:
             --out=./release/youtube-revanced-armeabi-v7a.apk \
             --purge=true \
             --force \
-            ./download/youtube-armeabi-v7a.apk
+            --keystore=~/.android/revanced.keystore \
+            --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
+            --alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
+            ./download/youtube.apk
           
           if [[ -f ./release/youtube-revanced-armeabi-v7a.apk ]]; then
             green_log "[+] Successfully created armeabi-v7a APK"
@@ -439,8 +454,12 @@ jobs:
             --out=./release/youtube-revanced-x86_64.apk \
             --purge=true \
             --force \
-            ./download/youtube-x86_64.apk
-          
+            --keystore=~/.android/revanced.keystore \
+            --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
+            --alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
+            ./download/youtube.apk
+
           if [[ -f ./release/youtube-revanced-x86_64.apk ]]; then
             green_log "[+] Successfully created x86_64 APK"
           else
@@ -486,7 +505,11 @@ jobs:
             --out=./release/youtube-revanced-x86.apk \
             --purge=true \
             --force \
-            ./download/youtube-x86.apk
+            --keystore=~/.android/revanced.keystore \
+            --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
+            --alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
+            ./download/youtube.apk
           
           if [[ -f ./release/youtube-revanced-x86.apk ]]; then
             green_log "[+] Successfully created x86 APK"
