@@ -344,8 +344,12 @@ jobs:
             --out=./release/youtube-revanced-arm64-v8a.apk \
             --purge=true \
             --force \
+            --keystore=$HOME/.android/revanced.keystore \
+            --keystore-password="${{ secrets.KEYSTORE_PASSWORD }}" \
+            --keystore-entry-alias="${{ secrets.KEY_ALIAS }}" \
+            --keystore-entry-password="${{ secrets.KEY_PASSWORD }}" \
             ./download/youtube-arm64-v8a.apk
-          
+
           if [[ -f ./release/youtube-revanced-arm64-v8a.apk ]]; then
             green_log "[+] Successfully created arm64-v8a APK"
           else
